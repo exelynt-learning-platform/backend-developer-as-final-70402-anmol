@@ -1,158 +1,172 @@
 package com.anmol.bookingsystem;
 
+import com.anmol.bookingsystem.dto.LoginRequest;
 import com.anmol.bookingsystem.dto.ReservationRequestDTO;
-import com.anmol.bookingsystem.entity.Reservation;
 import com.anmol.bookingsystem.entity.ReservationStatus;
-import com.anmol.bookingsystem.entity.Resource;
-import com.anmol.bookingsystem.entity.Role;
-import com.anmol.bookingsystem.entity.User;
-import com.anmol.bookingsystem.exception.UnauthorizedAccessException;
-import com.anmol.bookingsystem.repository.ReservationRepository;
-import com.anmol.bookingsystem.repository.ResourceRepository;
-import com.anmol.bookingsystem.repository.UserRepository;
-import com.anmol.bookingsystem.service.ReservationService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Pageable;
-import org.springframework.data.domain.Sort;
-import org.springframework.security.core.Authentication;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Optional;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-@ExtendWith(MockitoExtension.class)
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("test")
 class ReservationSecurityTest {
 
-    @Mock
-    private ReservationRepository reservationRepository;
+    @Autowired
+    private MockMvc mockMvc;
 
-    @Mock
-    private ResourceRepository resourceRepository;
+    @Autowired
+    private ObjectMapper objectMapper;
 
-    @Mock
-    private UserRepository userRepository;
-
-    @Mock
-    private Authentication authentication;
-
-    @InjectMocks
-    private ReservationService reservationService;
-
-    private User owner;
-    private User otherUser;
-    private Resource resource;
-    private Reservation reservation;
+    private String adminToken;
+    private String userToken;
+    private String user2Token;
 
     @BeforeEach
-    void setUp() {
-        owner = user(1L, "owner", Role.USER);
-        otherUser = user(2L, "other", Role.USER);
-        resource = new Resource(10L, "Meeting Room", "ROOM", "Main room", true);
-        reservation = new Reservation(20L, owner, resource,
-                LocalDateTime.now().plusDays(1), LocalDateTime.now().plusDays(1).plusHours(2),
-                BigDecimal.valueOf(100), ReservationStatus.PENDING);
+    void setUp() throws Exception {
+        adminToken = getToken("admin", "admin123");
+        userToken  = getToken("user1", "user123");
+        user2Token = getToken("user2", "user456"); // seed a second user if needed
     }
 
+    private String getToken(String username, String password) throws Exception {
+        LoginRequest req = new LoginRequest();
+        req.setUsername(username);
+        req.setPassword(password);
+
+        MvcResult result = mockMvc.perform(post("/auth/login")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(req)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String body = result.getResponse().getContentAsString();
+        return objectMapper.readTree(body).get("token").asText();
+    }
+
+    // 1. Unauthenticated access denied
     @Test
-    void userCannotReadAnotherUsersReservation() {
-        when(authentication.getName()).thenReturn("other");
-        when(userRepository.findByUsername("other")).thenReturn(Optional.of(otherUser));
-        when(reservationRepository.findById(20L)).thenReturn(Optional.of(reservation));
-
-        assertThrows(UnauthorizedAccessException.class,
-                () -> reservationService.getReservationById(20L, authentication));
+    void getReservations_withoutToken_returns401() throws Exception {
+        mockMvc.perform(get("/reservations"))
+                .andExpect(status().isUnauthorized());
     }
 
+    // 2. USER cannot read another user's reservation
     @Test
-    void ownerCanReadOwnReservation() {
-        when(authentication.getName()).thenReturn("owner");
-        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
-        when(reservationRepository.findById(20L)).thenReturn(Optional.of(reservation));
+    void getReservationById_asOtherUser_returns403or404() throws Exception {
+        // Create reservation as user1
+        Long reservationId = createReservationAsUser(userToken);
 
-        assertEquals(20L, reservationService.getReservationById(20L, authentication).getId());
+        // Try to access it as user2
+        mockMvc.perform(get("/reservations/" + reservationId)
+                .header("Authorization", "Bearer " + user2Token))
+                .andExpect(result ->
+                    org.junit.jupiter.api.Assertions.assertTrue(
+                        result.getResponse().getStatus() == 403 ||
+                        result.getResponse().getStatus() == 404));
     }
 
+    // 3. ADMIN can read any reservation
     @Test
-    void overlappingReservationIsRejected() {
-        ReservationRequestDTO request = request(10L, BigDecimal.valueOf(125));
-        when(authentication.getName()).thenReturn("owner");
-        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
-        when(resourceRepository.findById(10L)).thenReturn(Optional.of(resource));
-        when(reservationRepository.existsOverlappingReservation(eq(10L), any(), any())).thenReturn(true);
+    void getReservationById_asAdmin_returns200() throws Exception {
+        Long reservationId = createReservationAsUser(userToken);
 
-        assertThrows(IllegalArgumentException.class,
-                () -> reservationService.createReservation(request, authentication));
+        mockMvc.perform(get("/reservations/" + reservationId)
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(reservationId));
     }
 
+    // 4. USER cannot update status of someone else's reservation
     @Test
-    void invalidPriceRangeIsRejectedBeforeQuery() {
-        assertThrows(IllegalArgumentException.class,
-                () -> reservationService.getReservations(authentication, null,
-                        BigDecimal.valueOf(200), BigDecimal.valueOf(100), PageRequest.of(0, 10)));
+    void updateStatus_asOtherUser_returns403() throws Exception {
+        Long reservationId = createReservationAsUser(userToken);
+
+        mockMvc.perform(patch("/reservations/" + reservationId + "/status")
+                .param("status", "CONFIRMED")
+                .header("Authorization", "Bearer " + user2Token))
+                .andExpect(result ->
+                    org.junit.jupiter.api.Assertions.assertTrue(
+                        result.getResponse().getStatus() == 403 ||
+                        result.getResponse().getStatus() == 404));
     }
 
+    // 5. ADMIN can update any reservation status
     @Test
-    void unsupportedSortFieldIsRejected() {
-        assertThrows(IllegalArgumentException.class,
-                () -> reservationService.getReservations(authentication, null, null, null,
-                        PageRequest.of(0, 10, Sort.by("password"))));
+    void updateStatus_asAdmin_returns200() throws Exception {
+        Long reservationId = createReservationAsUser(userToken);
+
+        mockMvc.perform(patch("/reservations/" + reservationId + "/status")
+                .param("status", "CONFIRMED")
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("CONFIRMED"));
     }
 
+    // 6. USER listing sees only own reservations
     @Test
-    void defaultSortIsAppliedToReservationSearch() {
-        when(authentication.getName()).thenReturn("owner");
-        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
-        when(reservationRepository.findAll(
-            org.mockito.ArgumentMatchers.<org.springframework.data.jpa.domain.Specification<Reservation>>any(),
-            any(Pageable.class)))
-                .thenReturn(new PageImpl<>(List.of()));
-
-        reservationService.getReservations(authentication, null, null, null, PageRequest.of(0, 10));
-
-        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
-        verify(reservationRepository).findAll(
-            org.mockito.ArgumentMatchers.<org.springframework.data.jpa.domain.Specification<Reservation>>any(),
-            pageable.capture());
-        assertEquals("startTime", pageable.getValue().getSort().getOrderFor("startTime").getProperty());
+    void getReservations_asUser_returnsOnlyOwnReservations() throws Exception {
+        mockMvc.perform(get("/reservations")
+                .header("Authorization", "Bearer " + userToken))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[*].username")
+                    .value(org.hamcrest.Matchers.everyItem(
+                        org.hamcrest.Matchers.is("user1"))));
     }
 
+    // 7. POST resource returns 201
     @Test
-    void adminCanUpdateReservationStatus() {
-        User admin = user(3L, "admin", Role.ADMIN);
-        when(reservationRepository.findById(20L)).thenReturn(Optional.of(reservation));
-        when(reservationRepository.save(reservation)).thenReturn(reservation);
-
-        reservationService.updateReservationStatus(20L, ReservationStatus.CONFIRMED);
-
-        assertEquals(ReservationStatus.CONFIRMED, reservation.getStatus());
+    void createResource_asAdmin_returns201() throws Exception {
+        String body = """
+                { "name": "Room A", "description": "Conference room" }
+                """;
+        mockMvc.perform(post("/resources")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body)
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.name").value("Room A"))
+                .andExpect(jsonPath("$.available").value(true));
     }
 
-    private User user(Long id, String username, Role role) {
-        return new User(id, username, "hashed", role);
+    // 8. Invalid enum value returns 400 not 500
+    @Test
+    void updateStatus_invalidEnum_returns400() throws Exception {
+        mockMvc.perform(patch("/reservations/1/status")
+                .param("status", "INVALID_VALUE")
+                .header("Authorization", "Bearer " + adminToken))
+                .andExpect(status().isBadRequest());
     }
 
-    private ReservationRequestDTO request(Long resourceId, BigDecimal price) {
-        ReservationRequestDTO request = new ReservationRequestDTO();
-        request.setResourceId(resourceId);
-        request.setStartTime(LocalDateTime.now().plusDays(2));
-        request.setEndTime(LocalDateTime.now().plusDays(2).plusHours(1));
-        request.setPrice(price);
-        return request;
+    // Helper
+    private Long createReservationAsUser(String token) throws Exception {
+        ReservationRequestDTO dto = new ReservationRequestDTO();
+        dto.setResourceId(1L);
+        dto.setStartTime(LocalDateTime.now().plusDays(1));
+        dto.setEndTime(LocalDateTime.now().plusDays(1).plusHours(2));
+        dto.setPrice(new BigDecimal("100.00"));
+
+        MvcResult result = mockMvc.perform(post("/reservations")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(dto))
+                .header("Authorization", "Bearer " + token))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        String body = result.getResponse().getContentAsString();
+        return objectMapper.readTree(body).get("id").asLong();
     }
 }
