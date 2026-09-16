@@ -1,0 +1,19 @@
+package com.example.booking.config;
+
+import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.security.SecurityScheme;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+
+@Configuration
+public class OpenApiConfig {
+    @Bean
+    OpenAPI bookingOpenAPI() {
+        return new OpenAPI()
+                .info(new Info().title("Resource Booking API").version("1.0")
+                        .description("JWT-secured resource and reservation management API"))
+                .components(new io.swagger.v3.oas.models.Components().addSecuritySchemes("bearerAuth",
+                        new SecurityScheme().type(SecurityScheme.Type.HTTP).scheme("bearer").bearerFormat("JWT")));
+    }
+}
