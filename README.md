@@ -23,6 +23,12 @@ mvn spring-boot:run
 
 `DDL_AUTO` defaults to `update`. Use `DDL_AUTO=validate` when schema migrations are managed externally. Demo seed data is disabled by default; set `SEED_DATA_ENABLED=true` only for local development. Tests use an in-memory H2 database.
 
+If Docker/PostgreSQL is not installed, run the self-contained local H2 profile:
+
+```powershell
+mvn spring-boot:run "-Dspring-boot.run.profiles=local"
+```
+
 Seed accounts are created on an empty database:
 
 - `admin` / `Admin@123` with `ADMIN`
