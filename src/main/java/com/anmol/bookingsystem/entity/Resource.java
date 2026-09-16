@@ -1,15 +1,13 @@
 package com.anmol.bookingsystem.entity;
 
 import jakarta.persistence.*;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.Getter;
+import lombok.Setter;
 
 @Entity
 @Table(name = "resources")
-@Data
-@NoArgsConstructor
-@AllArgsConstructor
+@Getter
+@Setter
 public class Resource {
 
     @Id
@@ -19,11 +17,21 @@ public class Resource {
     @Column(nullable = false)
     private String name;
 
-    @Column(nullable = false)
-    private String type;
-
     private String description;
 
     @Column(nullable = false)
-    private boolean available = true;
+    private Boolean available = true;
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (!(o instanceof Resource)) return false;
+        Resource resource = (Resource) o;
+        return id != null && id.equals(resource.id);
+    }
+
+    @Override
+    public int hashCode() {
+        return getClass().hashCode();
+    }
 }

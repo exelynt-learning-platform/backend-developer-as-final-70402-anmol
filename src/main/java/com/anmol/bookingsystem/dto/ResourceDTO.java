@@ -8,13 +8,11 @@ public class ResourceDTO {
 
     private Long id;
 
-    @NotBlank(message = "Name is required")
+    @NotBlank(message = "Resource name is required")
     private String name;
-
-    @NotBlank(message = "Type is required")
-    private String type;
 
     private String description;
 
-    private boolean available = true;
+    // available is NOT accepted from create request — system managed
+    private Boolean available;
 }
