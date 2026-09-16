@@ -42,6 +42,13 @@ public class ReservationController {
         return reservations.create(auth.getName(), request, admin);
     }
 
+    @PatchMapping("/{id}/cancel")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @PreAuthorize("hasRole('USER')")
+    public void cancel(Authentication auth, @PathVariable Long id) {
+        reservations.cancel(auth.getName(), id);
+    }
+
     @PutMapping("/{id}")
     @PreAuthorize("hasRole('ADMIN')")
     public ReservationDtos.Response update(@PathVariable Long id, @Valid @RequestBody ReservationDtos.Request request) {

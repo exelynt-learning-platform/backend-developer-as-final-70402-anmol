@@ -41,6 +41,13 @@ class SecurityIntegrationTests {
     }
 
     @Test
+    void invalidBearerTokenReturnsJsonUnauthorized() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get("/resources")
+                .header("Authorization", "Bearer tampered-token"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    @Test
     void userCannotCreateConfirmedReservation() throws Exception {
         String login = mockMvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON)
                 .content("{\"username\":\"user\",\"password\":\"User@123\"}"))
@@ -51,5 +58,19 @@ class SecurityIntegrationTests {
                 .content(
                         "{\"resourceId\":1,\"price\":25.00,\"startTime\":\"2099-01-01T10:00:00Z\",\"endTime\":\"2099-01-01T11:00:00Z\",\"status\":\"CONFIRMED\"}"))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void overlappingPendingReservationsAreRejected() throws Exception {
+        String login = mockMvc.perform(post("/auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"user\",\"password\":\"User@123\"}"))
+                .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        String token = objectMapper.readTree(login).get("token").asText();
+        String first = "{\"resourceId\":1,\"price\":25.00,\"startTime\":\"2099-02-01T10:00:00Z\",\"endTime\":\"2099-02-01T11:00:00Z\"}";
+        String second = "{\"resourceId\":1,\"price\":30.00,\"startTime\":\"2099-02-01T10:30:00Z\",\"endTime\":\"2099-02-01T11:30:00Z\"}";
+        mockMvc.perform(post("/reservations").header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON).content(first)).andExpect(status().isCreated());
+        mockMvc.perform(post("/reservations").header("Authorization", "Bearer " + token)
+                .contentType(MediaType.APPLICATION_JSON).content(second)).andExpect(status().isBadRequest());
     }
 }

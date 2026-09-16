@@ -6,19 +6,20 @@ import com.example.booking.repository.*;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.data.domain.*;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.time.Instant;
 
 @Service
 public class ReservationService {
     private final ReservationRepository reservations;
-    private final ResourceService resourceService;
+    private final ResourceRepository resources;
     private final UserRepository users;
 
-    public ReservationService(ReservationRepository reservations, ResourceService resourceService,
+    public ReservationService(ReservationRepository reservations, ResourceRepository resources,
             UserRepository users) {
         this.reservations = reservations;
-        this.resourceService = resourceService;
+        this.resources = resources;
         this.users = users;
     }
 
@@ -31,22 +32,42 @@ public class ReservationService {
                 .map(this::response);
     }
 
+    @Transactional
     public ReservationDtos.Response create(String username, ReservationDtos.Request request, boolean admin) {
         validateTimes(request.startTime(), request.endTime());
         AppUser user = users.findByUsername(username).orElseThrow(() -> new EntityNotFoundException("User not found"));
         ReservationStatus status = request.status() == null ? ReservationStatus.PENDING : request.status();
         if (!admin && status != ReservationStatus.PENDING)
             throw new IllegalArgumentException("Users may only create PENDING reservations");
-        return response(reservations.save(new Reservation(resourceService.find(request.resourceId()), user,
+        Resource resource = resources.findByIdForUpdate(request.resourceId())
+                .orElseThrow(() -> new EntityNotFoundException("Resource not found: " + request.resourceId()));
+        ensureBookable(resource, request.startTime(), request.endTime(), null);
+        return response(reservations.save(new Reservation(resource, user,
                 request.price(), request.startTime(), request.endTime(), status)));
     }
 
+    @Transactional
     public ReservationDtos.Response update(Long id, ReservationDtos.Request request) {
         validateTimes(request.startTime(), request.endTime());
         Reservation reservation = find(id);
-        reservation.update(resourceService.find(request.resourceId()), request.price(), request.startTime(),
+        Resource resource = resources.findByIdForUpdate(request.resourceId())
+                .orElseThrow(() -> new EntityNotFoundException("Resource not found: " + request.resourceId()));
+        ensureBookable(resource, request.startTime(), request.endTime(), id);
+        reservation.update(resource, request.price(), request.startTime(),
                 request.endTime(), request.status() == null ? reservation.getStatus() : request.status());
         return response(reservations.save(reservation));
+    }
+
+    @Transactional
+    public void cancel(String username, Long id) {
+        Reservation reservation = find(id);
+        if (!reservation.getUser().getUsername().equals(username))
+            throw new EntityNotFoundException("Reservation not found: " + id);
+        if (reservation.getStatus() != ReservationStatus.CANCELLED) {
+            reservation.update(reservation.getResource(), reservation.getPrice(), reservation.getStartTime(),
+                    reservation.getEndTime(), ReservationStatus.CANCELLED);
+            reservations.save(reservation);
+        }
     }
 
     public void delete(Long id) {
@@ -60,6 +81,13 @@ public class ReservationService {
     private void validateTimes(Instant start, Instant end) {
         if (!end.isAfter(start))
             throw new IllegalArgumentException("endTime must be after startTime");
+    }
+
+    private void ensureBookable(Resource resource, Instant start, Instant end, Long excludedId) {
+        if (!resource.isAvailable())
+            throw new IllegalArgumentException("Resource is not available");
+        if (reservations.existsOverlapping(resource.getId(), start, end, ReservationStatus.CANCELLED, excludedId))
+            throw new IllegalArgumentException("Resource is already reserved for the requested time");
     }
 
     private Sort parseSort(String sort) {

@@ -7,12 +7,15 @@ import com.example.booking.repository.*;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.context.annotation.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.beans.factory.annotation.Value;
 
 @Configuration
 public class DataInitializer {
     @Bean
-    CommandLineRunner seed(UserRepository users, ResourceRepository resources, PasswordEncoder encoder) {
+    CommandLineRunner seed(UserRepository users, ResourceRepository resources, PasswordEncoder encoder,
+            @Value("${app.seed.enabled:false}") boolean seedEnabled) {
         return args -> {
+            if (!seedEnabled) return;
             if (users.count() == 0) {
                 users.save(new AppUser("admin", encoder.encode("Admin@123"), Role.ADMIN));
                 users.save(new AppUser("user", encoder.encode("User@123"), Role.USER));

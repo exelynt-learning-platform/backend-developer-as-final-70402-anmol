@@ -17,10 +17,11 @@ $env:DB_URL="jdbc:postgresql://localhost:5432/booking"
 $env:DB_USERNAME="booking"
 $env:DB_PASSWORD="booking"
 $env:JWT_SECRET="replace-with-a-random-secret-at-least-32-characters"
+$env:SEED_DATA_ENABLED="true"
 mvn spring-boot:run
 ```
 
-`DDL_AUTO` defaults to `update`. Use `DDL_AUTO=validate` when schema migrations are managed externally. Tests use an in-memory H2 database.
+`DDL_AUTO` defaults to `update`. Use `DDL_AUTO=validate` when schema migrations are managed externally. Demo seed data is disabled by default; set `SEED_DATA_ENABLED=true` only for local development. Tests use an in-memory H2 database.
 
 Seed accounts are created on an empty database:
 
@@ -56,10 +57,13 @@ Swagger UI is available at `/swagger-ui.html`; the OpenAPI document is `/v3/api-
 | DELETE | `/resources/{id}`               | ADMIN                         |
 | GET    | `/reservations`                 | ADMIN sees all; USER sees own |
 | POST   | `/reservations`                 | ADMIN, USER                   |
+| PATCH  | `/reservations/{id}/cancel`     | Owning USER                   |
 | PUT    | `/reservations/{id}`            | ADMIN                         |
 | DELETE | `/reservations/{id}`            | ADMIN                         |
 
 Reservation creation ignores any owner field in the request. The authenticated username from the JWT is stored as the reservation owner. Request fields are `resourceId`, `price`, `startTime`, `endTime`, and optional `status` (`PENDING`, `CONFIRMED`, or `CANCELLED`). Times are ISO-8601 instants and `endTime` must be after `startTime`.
+
+Reservations reject unavailable resources and overlapping active reservations. Intervals use half-open semantics: a booking ending exactly when another starts is allowed. Resource locking prevents concurrent requests from passing the overlap check at the same time. Users create pending reservations and can cancel only their own reservations; administrators control reservation updates and statuses.
 
 Reservation search supports:
 
